@@ -1,0 +1,106 @@
+import streamlit as st
+import pandas as pd
+from binance.spot import Spot
+import pandas_ta as ta
+import requests
+
+# --- CONFIGURAÇÃO DA INTERFACE ---
+st.set_page_config(page_title="SignalBot - Trend Scanner", layout="wide")
+
+# Estilo CSS para o tema Dark e Profissional
+st.markdown("""
+    <style>
+    .main { background-color: #0e1117; }
+    .stMetric { background-color: #161b22; border-radius: 10px; padding: 15px; border: 1px solid #30363d; }
+    </style>
+    """, unsafe_allow_html=True)
+
+st.title("🛰️ SignalBot: Trend & Structure Scanner")
+st.caption("Estratégia: Riding Big Moves Without Getting Shaken Out")
+
+# --- BARRA LATERAL (CONFIGURAÇÕES) ---
+st.sidebar.image("https://cdn-icons-png.flaticon.com/512/2592/2592201.png", width=80)
+st.sidebar.header("Configurações do SignalBot")
+
+# Espaços para o Token e Chat ID
+tg_token = st.sidebar.text_input("Bot Token do Telegram", type="password", help="Pegue no @BotFather")
+tg_chat_id = st.sidebar.text_input("Chat ID do Telegram", help="Pegue no @userinfobot")
+
+symbol = st.sidebar.selectbox("Selecionar Ativo", ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT"])
+interval = st.sidebar.selectbox("Timeframe", ["1h", "4h", "1d"])
+ema_val = st.sidebar.slider("Período da EMA", 20, 200, 50)
+
+def enviar_alerta(msg):
+    if tg_token and tg_chat_id:
+        url = f"https://api.telegram.org/bot{tg_token}/sendMessage"
+        params = {"chat_id": tg_chat_id, "text": msg, "parse_mode": "Markdown"}
+        requests.get(url, params=params)
+        return True
+    return False
+
+# --- LÓGICA DE TRADING (BASEADA NO EBOOK) ---
+def buscar_dados():
+    try:
+        client = Spot()
+        klines = client.klines(symbol, interval, limit=100)
+        df = pd.DataFrame(klines, columns=['time', 'open', 'high', 'low', 'close', 'vol', 'close_time', 'qav', 'num_trades', 'taker_base', 'taker_quote', 'ignore'])
+        df['close'] = df['close'].astype(float)
+        df['high'] = df['high'].astype(float)
+        df['low'] = df['low'].astype(float)
+        df['time'] = pd.to_datetime(df['time'], unit='ms')
+        return df
+    except Exception as e:
+        st.error(f"Erro de conexão: {e}")
+        return None
+
+df = buscar_dados()
+
+if df is not None:
+    # Indicadores
+    df['EMA'] = ta.ema(df['close'], length=ema_val)
+    
+    # Identificar Estrutura (Swing Highs/Lows)
+    ultimo_topo = df['high'].iloc[-20:-1].max()
+    ultimo_fundo = df['low'].iloc[-20:-1].min()
+    preco_atual = df['close'].iloc[-1]
+    ema_atual = df['EMA'].iloc[-1]
+
+    # Dashboard de Métricas
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.metric("Preço Atual", f"${preco_atual:,.2f}")
+    with c2:
+        st.metric("Resistência (Swing High)", f"${ultimo_topo:,.2f}")
+    with c3:
+        st.metric("Suporte (Swing Low)", f"${ultimo_fundo:,.2f}")
+
+    st.divider()
+
+    # Lógica de Sinal (BOS - Break of Structure)
+    if preco_atual > ultimo_topo and preco_atual > ema_atual:
+        st.success("🔥 SINAL DETECTADO: BOS DE ALTA (Rompimento)")
+        status_msg = f"🚀 SignalBot Alerta: BOS de Alta\n\n📈 Ativo: {symbol}\n💎 Preço: ${preco_atual}\n🛡️ Estratégia: Rompimento de Topo + EMA {ema_val}\n\n⚠️ Ação: Aguarde o reteste na zona de ${ultimo_topo} para entrar com baixo risco!"
+        
+        if st.button("Enviar Alerta para o Telegram"):
+            if enviar_alerta(status_msg):
+                st.snow()
+                st.info("Alerta enviado com sucesso para o grupo VIP!")
+            else:
+                st.warning("Preencha o Token e o ID na barra lateral.")
+    
+    elif preco_atual < ultimo_fundo and preco_atual < ema_atual:
+        st.error("📉 SINAL DETECTADO: BOS DE BAIXA")
+    else:
+        st.warning("⚖️ MERCADO EM CONSOLIDAÇÃO (Sem tendência clara)")
+
+    # Gráfico Visual
+    st.subheader("Análise Visual de Tendência")
+    st.line_chart(df.tail(50).set_index('time')[['close', 'EMA']])
+
+# --- CHECKLIST DE MINDSET (MÓDULO 7 & 8) ---
+st.sidebar.divider()
+st.sidebar.subheader("🧠 Protocolo de Mindset")
+st.sidebar.info("Não ignore as regras do Playbook!")
+st.sidebar.checkbox("Desapegado emocionalmente do resultado?")
+st.sidebar.checkbox("Entrando no Pullback (e não no topo)?")
+st.sidebar.checkbox("Risco por operação definido?")
